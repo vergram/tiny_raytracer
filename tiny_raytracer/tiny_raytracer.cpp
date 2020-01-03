@@ -17,12 +17,22 @@ const int width = 1024;
 const int height = 768;
 const int fov =  3.14f / 2.f;
 
+struct Material
+{
+	Material(const Vec2f& albedo, const Vec3f& diffuse_color, float specular_exponent) : albedo(albedo), diffuse_color(diffuse_color), specular_exponent(specular_exponent){}
+	Material():albedo(), diffuse_color(), specular_exponent(){}
+	Vec2f albedo;
+	Vec3f diffuse_color;
+	float specular_exponent;
+};
+
 struct Sphere
 {
 	Vec3f center;
 	float radius;
+	Material material;
 
-	Sphere(const Vec3f& c, float r) : center(c), radius(r){}
+	Sphere(const Vec3f& c, float r, const Material& m) : center(c), radius(r), material(m){}
 
 	bool ray_intersect(const Vec3f& p, const Vec3f& dir, float& t0) const 
 	{
@@ -38,6 +48,58 @@ struct Sphere
 		return true;
 	}
 };
+
+struct Light
+{
+	Light(const Vec3f& position, float intensity) : position(position), intensity(intensity) {}
+
+	Vec3f position;
+	float intensity;
+};
+
+Vec3f reflect(const Vec3f& I, const Vec3f& N)
+{
+	return I - N * 2.0f * (I * N);
+}
+
+bool scene_intersect(const Vec3f& origin, const Vec3f& dir, const std::vector<Sphere>& spheres, Vec3f& point, Vec3f& N, Material& material)
+{
+	float spheres_dist = std::numeric_limits<float>::max();
+	for (int i = 0; i < spheres.size(); i++)
+	{
+		float dist_i = 0.0f;
+		if (spheres[i].ray_intersect(origin, dir, dist_i) && dist_i < spheres_dist)
+		{
+			spheres_dist = dist_i;
+			point = origin + dir * dist_i;
+			N = (point - spheres[i].center).normalize();
+			material = spheres[i].material;
+		}
+	}
+	return spheres_dist < 1000.0f;
+}
+
+Vec3f cast_ray(const Vec3f& origin, const Vec3f& dir, const std::vector<Sphere>& spheres, const std::vector<Light>& lights)
+{
+	Vec3f point, N;
+	Material material;
+
+	if (!scene_intersect(origin, dir, spheres, point, N, material))
+	{
+		return Vec3f(0.2f, 0.7f, 0.8f);
+	}
+	float diffuse_intensity = 0.f, specular_intensity = 0.0f;
+	for (int i = 0; i < lights.size(); i++)
+	{
+		Vec3f light_dir = (lights[i].position - point).normalize();
+		float light_diffuse = std::max(0.0f, light_dir* N);
+		diffuse_intensity += lights[i].intensity * light_diffuse;
+		specular_intensity += powf(std::max(0.f, -reflect(-light_dir, N) * dir), material.specular_exponent) * lights[i].intensity;
+	}
+
+	return material.diffuse_color * diffuse_intensity * material.albedo[0] + Vec3f(1.0f,1.0f,1.0f)* specular_intensity * material.albedo[1];
+}
+
 
 void out_jpg(const std::vector<Vec3f>& framebuffer)
 {
@@ -55,29 +117,18 @@ void out_jpg(const std::vector<Vec3f>& framebuffer)
 	free(data);
 }
 
-Vec3f cast_ray(const Vec3f& origin, const Vec3f& dir, const Sphere& sphere)
-{
-	float sphere_dist = std::numeric_limits<float>::max();
-	if (!sphere.ray_intersect(origin, dir, sphere_dist))
-	{
-		return Vec3f(0.2f, 0.7f, 0.8f);
-	}
-	return Vec3f(0.4f, 0.4f, 0.4f);
-}
-
-void render()
+void render(const std::vector<Sphere>& spheres, const std::vector<Light>& lights)
 {
 	std::vector<Vec3f> framebuffer(width * height);
 
-	Sphere sphere(Vec3f(-3, 0, -16), 2);
 	for (size_t j = 0; j < height; j++)
 	{
 		for (size_t i = 0; i < width; i++)
 		{
 			float x = ((float)i / (float)width * 2.0f - 1.0f) * tan(fov / 2.0f) * width / (float)height;
-			float y = ((float)j / (float)height * 2.0f - 1.0f) * tan(fov / 2.0f);
+			float y = -((float)j / (float)height * 2.0f - 1.0f) * tan(fov / 2.0f);
 			Vec3f dir = Vec3f(x, y, -1.0f).normalize();
-			framebuffer[i + j * width] = cast_ray(Vec3f(0, 0, 0), dir, sphere);
+			framebuffer[i + j * width] = cast_ray(Vec3f(0, 0, 0), dir, spheres, lights);
 		}
 	}
 
@@ -86,6 +137,19 @@ void render()
 
 int main()
 {
-	render();
+	Material      ivory(Vec2f(0.6, 0.3), Vec3f(0.4, 0.4, 0.3), 50.);
+	Material red_rubber(Vec2f(0.9, 0.1), Vec3f(0.3, 0.1, 0.1), 10.);
+
+	std::vector<Light>  lights;
+	lights.push_back(Light(Vec3f(-20, 20, 20), 1.5));
+	lights.push_back(Light(Vec3f(30, 50, -25), 1.8));
+	lights.push_back(Light(Vec3f(30, 20, 30), 1.7));
+	
+	std::vector<Sphere> spheres;
+	spheres.push_back(Sphere(Vec3f(-3, 0, -16), 2, ivory));
+	spheres.push_back(Sphere(Vec3f(-1.0, -1.5, -12), 2, red_rubber));
+	spheres.push_back(Sphere(Vec3f(1.5, -0.5, -18), 3, red_rubber));
+	spheres.push_back(Sphere(Vec3f(7, 5, -18), 4, ivory));
+	render(spheres, lights);
 	return 0;
 }
